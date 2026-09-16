@@ -214,6 +214,86 @@ export class YouTubeService {
     });
   }
 
+  async enrichSearchItems(items: unknown[]): Promise<{
+    items: unknown[]; dataCost: number; warnings: string[];
+  }> {
+    let dataCost = 0;
+    const warnings = new Set<string>();
+    type Pending = {
+      id: string;
+      resolve: (value: Record<string, unknown>) => void;
+      reject: (reason: unknown) => void;
+    };
+    let pending: Pending[] = [];
+    // getOrLoad invokes this only for cache misses. Microtask batching also
+    // preserves the cache's existing in-flight deduplication for metadata reads.
+    const load = (id: string): Promise<Record<string, unknown>> => new Promise((resolve, reject) => {
+      pending.push({ id, resolve, reject });
+      if (pending.length !== 1) return;
+      queueMicrotask(() => {
+        const batch = pending;
+        pending = [];
+        void (async () => {
+          for (let offset = 0; offset < batch.length; offset += 50) {
+            const group = batch.slice(offset, offset + 50);
+            try {
+              const videos = await this.requireDataApi().getVideos(
+                group.map((entry) => entry.id), () => { dataCost += 1; },
+              );
+              const byId = new Map(videos.map((video) => [String(video.id), video]));
+              for (const entry of group) {
+                const video = byId.get(entry.id);
+                if (video) entry.resolve(video);
+                else entry.reject(new YouTubeMcpError("VIDEO_NOT_FOUND", "Video metadata was not supplied."));
+              }
+            } catch (error) {
+              for (const entry of group) entry.reject(error);
+            }
+          }
+        })();
+      });
+    });
+    const ids = items.map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const row = item as Record<string, unknown>;
+      // Uploads use playlist-item IDs in `id`; the video ID is a separate field.
+      const value = row.videoId ?? row.id;
+      return typeof value === "string" && /^[A-Za-z0-9_-]{11}$/.test(value) ? value : null;
+    });
+    const results = new Map<string, Record<string, unknown>>();
+    await Promise.all([...new Set(ids.filter((id): id is string => id !== null))].map(async (id) => {
+      try {
+        const video = await this.videoCache.getOrLoad(`video:${id}`, () => load(id));
+        if (video.provider !== "youtube-data-api-v3") {
+          results.set(id, { statisticsAvailability: "unavailable", statisticsReason: "limited_cached_metadata" });
+          warnings.add("Some cached metadata is limited; statistics were not supplied.");
+          return;
+        }
+        const stats = video.statistics as Record<string, unknown> | undefined;
+        const statistics = Object.fromEntries(
+          ["viewCount", "likeCount", "commentCount"].filter((key) => stats?.[key] !== undefined)
+            .map((key) => [key, stats![key]]),
+        );
+        const complete = Object.keys(statistics).length === 3 && typeof video.durationSeconds === "number";
+        results.set(id, {
+          statistics, durationSeconds: video.durationSeconds ?? null,
+          statisticsAvailability: complete ? "available" : "partial",
+        });
+      } catch (error) {
+        const code = error instanceof YouTubeMcpError ? error.code : "YOUTUBE_API_ERROR";
+        results.set(id, { statisticsAvailability: "unavailable", statisticsReason: code });
+        warnings.add(`Some video statistics are unavailable (${code}); search results were retained.`);
+      }
+    }));
+    return {
+      items: items.map((item, index) => ({
+        ...(item as Record<string, unknown>),
+        ...(ids[index] ? results.get(ids[index]!) : { statisticsAvailability: "unavailable", statisticsReason: "missing_video_id" }),
+      })),
+      dataCost, warnings: [...warnings],
+    };
+  }
+
   private getTranscriptDocument(
     reference: string,
     language: string | undefined,

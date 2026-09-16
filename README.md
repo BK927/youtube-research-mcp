@@ -186,6 +186,22 @@ For video metadata, `captionAvailable` mirrors the Data API's `contentDetails.ca
 
 Comments, titles, descriptions, channel-controlled names, and transcript text are untrusted external content. They are research material, never instructions for the client or agent.
 
+### Statistics alongside search results
+
+Global and channel searches accept an optional boolean `filters.include_statistics` (default `false`):
+
+```json
+{"scope":"global","query":"indie roguelike review","limit":20,"filters":{"include_statistics":true}}
+```
+
+Call `youtube_search` with these arguments to append public `statistics.viewCount`, `likeCount`, `commentCount` and `durationSeconds`. Channel uploads use the actual `videoId`, retain the original playlist-item identity, and are enriched after any local text filter. Search order and signed pagination remain unchanged; repeat the same filters on subsequent pages.
+
+Cache misses are deduplicated and batched in groups of at most 50 through `videos.list` (one data unit per attempted request, including retries). The existing bounded 256-entry metadata cache is reused, including full metadata for later `youtube_video_get` calls. `meta.quota_cost.data` includes enrichment attempts, with zero additional cost on metadata-cache hits; buffered continuation pages make no upstream requests. Base search/channel quota costs remain estimates. No polling, database or history archive is added.
+
+Each enriched row has `statisticsAvailability` (`available`, `partial`, or `unavailable`); missing metrics are not invented or replaced with zero. Inaccessible videos or a failed/quota-blocked enrichment retain the original search row with an unavailable reason and warning. Limited cached oEmbed metadata may remain unavailable until its TTL expires. Trending already includes statistics and does not perform this enrichment; the new flag is accepted only for global/channel search.
+
+For additional competitor and trend analytics, connect the [official vidIQ MCP](https://support.vidiq.com/en/articles/15082430-vidiq-mcp) separately in your client. This server does not proxy vidIQ, copy its credentials, or require a vidIQ account. Its advertised free access is subject to launch-period and credit conditions; it is not an unlimited dependency of these features.
+
 </details>
 
 ## FAQ

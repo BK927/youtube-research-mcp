@@ -284,6 +284,7 @@ export class YouTubeDataApiClient {
     resource: string,
     params: Record<string, string | number | boolean | undefined>,
     bucket: QuotaBucket = "data",
+    onRequest?: () => void,
   ): Promise<T> {
     const endpoint = new URL(`${this.baseUrl}/${resource}`);
     for (const [key, value] of Object.entries(params)) {
@@ -296,6 +297,7 @@ export class YouTubeDataApiClient {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await this.quota.consume(bucket, 1, resource);
+      onRequest?.();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
@@ -336,7 +338,6 @@ export class YouTubeDataApiClient {
     const response = await this.request<ListResponse<VideoItem>>("videos", {
       part: "snippet,contentDetails,statistics,status,liveStreamingDetails",
       id: videoId,
-      maxResults: 1,
     });
     const item = response.items?.[0];
     if (!item) {
@@ -347,6 +348,22 @@ export class YouTubeDataApiClient {
       );
     }
     return normalizeVideo(item);
+  }
+
+  async getVideos(
+    videoIds: string[],
+    onRequest?: () => void,
+  ): Promise<Record<string, unknown>[]> {
+    const ids = [...new Set(videoIds)];
+    if (ids.length === 0) return [];
+    if (ids.length > 50) {
+      throw new YouTubeMcpError("INVALID_ARGUMENT", "A video metadata batch supports at most 50 IDs.");
+    }
+    const response = await this.request<ListResponse<VideoItem>>("videos", {
+      part: "snippet,contentDetails,statistics,status,liveStreamingDetails",
+      id: ids.join(","),
+    }, "data", onRequest);
+    return (response.items ?? []).map(normalizeVideo);
   }
 
   async searchVideos(

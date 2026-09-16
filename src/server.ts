@@ -68,11 +68,11 @@ const TOOL_SCHEMAS: Record<string, unknown> = {
       query: "required for global/transcript; optional for channel",
       within: "channel for channel scope; video for transcript scope",
       filters: {
-        global: ["order", "channel_id", "published_after", "published_before", "region", "relevance_language", "safe_search", "video_duration"],
-        channel: ["strategy"],
+        global: ["order", "channel_id", "published_after", "published_before", "region", "relevance_language", "safe_search", "video_duration", "include_statistics"],
+        channel: ["strategy", "include_statistics"],
         transcript: ["language", "match_mode", "case_sensitive", "context_segments", "from", "to"],
         trending: ["region", "category_id"],
-        note: "filters.region overrides an explicit locale region such as ko-KR",
+        note: "region overrides locale region; include_statistics=false by default, true batches cached official statistics/duration for global/channel only; missing values are not zero",
       },
       cursor: "opaque signed cursor",
       limit: "1..100",
@@ -916,11 +916,14 @@ export function createYoutubeMcpServer(
             "relevance_language",
             "safe_search",
             "video_duration",
+            "include_statistics",
           ]);
           const normalizedQuery = requireArgument(query, "query");
+          const includeStatistics = booleanFilter(normalized, "include_statistics", false);
           assertNoArgument(within, "within");
           const searchFilters = {
             scope,
+            ...(includeStatistics ? { includeStatistics: true } : {}),
             query: normalizedQuery,
             order: enumFilter(
               normalized,
@@ -952,7 +955,10 @@ export function createYoutubeMcpServer(
             pageToken: pageToken(codec, cursor, "youtube_search", searchFilters),
             ...searchFilters,
           });
-          const items = Array.isArray(result.items) ? result.items : [];
+          const rawItems = Array.isArray(result.items) ? result.items : [];
+          const enriched = includeStatistics
+            ? await service.enrichSearchItems(rawItems)
+            : { items: rawItems, dataCost: 0, warnings: [] };
           const next =
             typeof result.nextPageToken === "string"
               ? nextCursor(codec, "youtube_search", searchFilters, {
@@ -962,18 +968,19 @@ export function createYoutubeMcpServer(
           return payload(
             "collection",
             { ...without(result, ["items", "nextPageToken", "prevPageToken", "warnings"]), totalResultsReliable: false },
-            items,
+            enriched.items,
             next,
             null,
-            result,
-            { data: 0, search: 1 },
+            { ...result, warnings: [...stringArray(result.warnings), ...enriched.warnings] },
+            { data: enriched.dataCost, search: 1 },
             ["items[].title", "items[].description", "items[].channelTitle"],
             config,
           );
         }
 
         if (scope === "channel") {
-          const normalized = checkedFilters(filters, ["strategy"]);
+          const normalized = checkedFilters(filters, ["strategy", "include_statistics"]);
+          const includeStatistics = booleanFilter(normalized, "include_statistics", false);
           const channel = requireArgument(within, "within");
           const normalizedQuery = query.trim();
           const requestedStrategy = enumFilter(
@@ -997,6 +1004,7 @@ export function createYoutubeMcpServer(
           const searchFilters = {
             scope,
             channel,
+            ...(includeStatistics ? { includeStatistics: true } : {}),
             query: normalizedQuery,
             strategy,
           };
@@ -1029,6 +1037,9 @@ export function createYoutubeMcpServer(
                   .includes(needle);
               })
             : rawItems;
+          const enriched = includeStatistics
+            ? await service.enrichSearchItems(items)
+            : { items, dataCost: 0, warnings: [] };
           const next =
             typeof result.nextPageToken === "string"
               ? nextCursor(codec, "youtube_search", searchFilters, {
@@ -1045,13 +1056,13 @@ export function createYoutubeMcpServer(
               channel: { id: channelId, title: channelRecord.title ?? null },
               ...(strategy === "search" ? { totalResultsReliable: false } : {}),
             },
-            items,
+            enriched.items,
             next,
             `youtube://entity/channel/${channelId}`,
-            result,
+            { ...result, warnings: [...stringArray(result.warnings), ...enriched.warnings] },
             strategy === "search"
-              ? { data: 1, search: 1 }
-              : { data: 2, search: 0 },
+              ? { data: 1 + enriched.dataCost, search: 1 }
+              : { data: 2 + enriched.dataCost, search: 0 },
             ["data.channel.title", "items[].title", "items[].description", "items[].channelTitle"],
             config,
           );
