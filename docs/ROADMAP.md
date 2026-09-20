@@ -22,3 +22,7 @@ This file records the two compatibility-breaking compact-surface milestones. It 
 ## Gate for future capabilities
 
 Add a new public tool only when an existing view/scope cannot express a distinct authorization, lifecycle, or long-running job boundary. Account OAuth, writes, Analytics/Reporting, and large corpus collection require separate security and product decisions before implementation.
+
+## Public posts extension
+
+The public surface now has five tools. The user-approved post extension adds `youtube_post_get` for the separate post entity and `youtube_search(scope="posts")` for channel lists, retaining all existing calls. This is an explicit exception to the earlier compact-surface gate above; it does not authorize account writes, login cookies, or corpus collection. The implementation uses the installed YouTube.js dependency and bounded process-memory caches.

@@ -1,3 +1,4 @@
+import { POST_TTL_MS, type PostResult } from "./providers/posts.js";
 import {
   McpServer,
   ResourceNotFoundError,
@@ -8,12 +9,14 @@ import { loadConfig } from "./config.js";
 import { CursorCodec } from "./cursor.js";
 import { YouTubeMcpError } from "./errors.js";
 import { SERVER_NAME, SERVER_VERSION } from "./meta.js";
-import { runTool, type ToolPayload } from "./mcp-response.js";
+import { runTool, successResult, type ToolPayload } from "./mcp-response.js";
 import { outputSchemas } from "./output-schemas.js";
 import { ResponsePager } from "./response-pager.js";
 import { FirestorePageStore } from "./cache/response-page-store.js";
 import type { AppConfig } from "./types.js";
 import {
+  exactPostChannel,
+  extractPostId,
   extractPlaylistId,
   extractVideoId,
 } from "./utils/ids.js";
@@ -36,6 +39,7 @@ const cursorSchema = z.string().min(1).optional();
 const limitSchema = z.number().int().min(1).max(100).default(10);
 const filtersSchema = z.record(z.string(), z.unknown()).default({});
 const responsePagers = new WeakMap<object, ResponsePager>();
+const postResponsePagers = new WeakMap<object, ResponsePager>();
 
 const TOOL_SCHEMAS: Record<string, unknown> = {
   youtube_video_get: {
@@ -64,12 +68,13 @@ const TOOL_SCHEMAS: Record<string, unknown> = {
   },
   youtube_search: {
     fields: {
-      scope: ["global", "channel", "transcript", "trending"],
+      scope: ["global", "channel", "transcript", "trending", "posts"],
       query: "required for global/transcript; optional for channel",
-      within: "channel for channel scope; video for transcript scope",
+      within: "channel for channel/posts scope; video for transcript scope",
       filters: {
         global: ["order", "channel_id", "published_after", "published_before", "region", "relevance_language", "safe_search", "video_duration", "include_statistics"],
         channel: ["strategy", "include_statistics"],
+        posts: [],
         transcript: ["language", "match_mode", "case_sensitive", "context_segments", "from", "to"],
         trending: ["region", "category_id"],
         note: "region overrides locale region; include_statistics=false by default, true batches cached official statistics/duration for global/channel only; missing values are not zero",
@@ -93,6 +98,19 @@ const TOOL_SCHEMAS: Record<string, unknown> = {
       include_items: "include one signed item page",
       cursor: "opaque signed cursor",
       limit: "1..100",
+    },
+  },
+  youtube_post_get: {
+    required: ["post"],
+    fields: {
+      post: "YouTube post ID or youtube.com/post/<id> URL",
+      view: ["content", "comments"],
+      options: { comments: { order: ["top", "newest"] } },
+      cursor: "signed process-local cursor, expires in 5 minutes; restart query after expiry/restart",
+      limit: "1..100, default 10; at most one upstream page per call",
+      max_chars: "256..12000 text budget; default 4000",
+      locale: "preferred language code",
+      note: "Public unofficial reads in hybrid/unofficial mode; no API key or cookies. Top-level comments only, image URLs only; dates/counts retain display labels.",
     },
   },
   error: {
@@ -633,6 +651,39 @@ function payload(
   };
 }
 
+function postPayload(result: PostResult, kind: ToolPayload["kind"], next: string | null, uri: string, maxChars: number): ToolPayload {
+  const body = structuredClone({ data: result.data, items: result.items });
+  const fields: { parent: Record<string, unknown>; text: string }[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "text" && typeof child === "string") fields.push({ parent: record(value), text: child });
+      else visit(child);
+    }
+  };
+  visit(body);
+  let remaining = maxChars;
+  let shortened = false;
+  fields.forEach((field, index) => {
+    const capped = capText(field.text, Math.max(1, Math.floor(remaining / (fields.length - index))));
+    field.parent.text = capped.text;
+    remaining -= capped.text.length;
+    if (capped.truncated) { field.parent.textTruncated = true; shortened = true; }
+  });
+  if (shortened) body.data.truncation = { truncated: true, reason: "max_chars", max_chars: maxChars, content_omitted: true };
+  return {
+    kind, ...body, page: { returned: body.items.length, has_more: Boolean(next), next_cursor: next },
+    meta: {
+      canonical_uri: uri, source: "youtube", provider: "youtubejs-posts",
+      retrieved_at: result.retrievedAt, fresh_until: result.freshUntil,
+      quota_cost: { data: 0, search: 0 },
+      warnings: [...result.warnings, ...(shortened ? ["Post/comment text was shortened to max_chars; IDs, display labels and attachment references were preserved."] : [])],
+      untrusted_fields: ["data.text", "data.author.name", "data.attachment", "data.sharedPost", "data.channelTitle", "items[].text", "items[].author.name", "items[].attachment", "items[].sharedPost"],
+    },
+  };
+}
+
 function templateVariable(
   variables: Record<string, string | string[]>,
   name: string,
@@ -673,6 +724,14 @@ export function createYoutubeMcpServer(
     responsePagers.set(service, pager);
   }
   const responsePager = pager;
+  // Post snapshots must remain in memory even when official quota/pages use Firestore.
+  const postCodec = new CursorCodec(config.cursorSecret, POST_TTL_MS);
+  let postPager = postResponsePagers.get(service);
+  if (!postPager) {
+    postPager = new ResponsePager(postCodec, POST_TTL_MS, config.maxResultBytes);
+    postResponsePagers.set(service, postPager);
+  }
+  const postResponsePager = postPager;
 
   server.registerTool(
     "youtube_video_get",
@@ -890,10 +949,10 @@ export function createYoutubeMcpServer(
   server.registerTool(
     "youtube_search",
     {
-      description: "Search videos/transcripts. Scope filters: youtube://schema/youtube_search. Trending returns compact metadata.",
+      description: "Search videos/transcripts or list channel posts (scope=posts, within=channel). Filters: youtube://schema/youtube_search.",
       outputSchema: outputSchemas.youtube_search,
       inputSchema: z.object({
-        scope: z.enum(["global", "channel", "transcript", "trending"]).default("global"),
+        scope: z.enum(["global", "channel", "transcript", "trending", "posts"]).default("global"),
         query: z.string().default(""),
         within: z.string().default(""),
         filters: filtersSchema,
@@ -905,7 +964,16 @@ export function createYoutubeMcpServer(
       _meta: oauthMeta,
     },
     async ({ scope, query, within, filters, cursor, limit, locale }) =>
-      responsePager.run("youtube_search", { scope, query, within, filters, locale }, cursor, limit, async () => {
+      (scope === "posts" ? postResponsePager : responsePager).run("youtube_search", { scope, query, within, filters, locale }, cursor, limit, async () => {
+        if (scope === "posts") {
+          checkedFilters(filters, []);
+          assertNoArgument(query, "query");
+          const channel = exactPostChannel(requireArgument(within, "within"));
+          const binding = { scope, query, within, filters, locale };
+          const result = await service.listPosts(channel, locale, pageToken(postCodec, cursor, "youtube_search", binding));
+          const next = result.nextPageToken ? postCodec.encode("youtube_search", binding, { pageToken: result.nextPageToken }, Date.parse(result.freshUntil)) : null;
+          return postPayload(result, "collection", next, `youtube://entity/channel/${String(result.data.channelId)}`, 12_000);
+        }
         if (scope === "global") {
           const normalized = checkedFilters(filters, [
             "order",
@@ -1258,6 +1326,35 @@ export function createYoutubeMcpServer(
       }),
   );
 
+  server.registerTool(
+    "youtube_post_get",
+    {
+      description: "Read a public community post or its top-level comments. Unofficial, no API key. Options: youtube://schema/youtube_post_get.",
+      outputSchema: outputSchemas.youtube_post_get,
+      inputSchema: z.object({
+        post: z.string().min(1), view: z.enum(["content", "comments"]).default("content"),
+        options: filtersSchema, cursor: cursorSchema, limit: limitSchema,
+        max_chars: z.number().int().min(256).max(12_000).default(4_000), locale: z.string().default(""),
+      }),
+      annotations: readOnlyAnnotations, _meta: oauthMeta,
+    },
+    async ({ post, view, options, cursor, limit, max_chars: maxChars, locale }) =>
+      postResponsePager.run("youtube_post_get", { post, view, options, maxChars, locale }, cursor, limit, async () => {
+        const id = extractPostId(post);
+        const binding = { post, view, options, maxChars, locale };
+        if (view === "content") {
+          checkedFilters(options, []);
+          if (cursor) throw new YouTubeMcpError("INVALID_ARGUMENT", "content view does not use a cursor.");
+          return postPayload(await service.getPost(id, locale), "entity", null, `youtube://entity/post/${id}`, maxChars);
+        }
+        checkedFilters(options, ["order"]);
+        const order = enumFilter(options, "order", ["top", "newest"], "top");
+        const result = await service.listPostComments(id, order, locale, pageToken(postCodec, cursor, "youtube_post_get", binding));
+        const next = result.nextPageToken ? postCodec.encode("youtube_post_get", binding, { pageToken: result.nextPageToken }, Date.parse(result.freshUntil)) : null;
+        return postPayload(result, "collection", next, `youtube://entity/post/${id}`, maxChars);
+      }),
+  );
+
   server.registerResource(
     "catalog",
     new ResourceTemplate("youtube://catalog", { list: undefined }),
@@ -1291,7 +1388,7 @@ export function createYoutubeMcpServer(
     "entity",
     new ResourceTemplate("youtube://entity/{kind}/{id}", { list: undefined }),
     {
-      description: "Canonical video, channel, or playlist metadata.",
+      description: "Canonical video, channel, playlist, or post metadata.",
       mimeType: "application/json",
     },
     async (uri, variables) => {
@@ -1299,6 +1396,10 @@ export function createYoutubeMcpServer(
       const id = templateVariable(variables, "id");
       let entity: Record<string, unknown>;
       if (kind === "video") entity = await service.getVideo(id);
+      else if (kind === "post") {
+        const result = postPayload(await service.getPost(id), "entity", null, uri.href, 4_000);
+        return jsonResource(uri, successResult(result, config.maxResultBytes).structuredContent);
+      }
       else if (kind === "channel") entity = await service.getChannel(id);
       else if (kind === "playlist") {
         const result = await service.getPlaylist(id, 1, undefined, false);

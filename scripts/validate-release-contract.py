@@ -14,6 +14,7 @@ EXPECTED_TOOLS = {
     "youtube_search",
     "youtube_channel_get",
     "youtube_playlist_get",
+    "youtube_post_get",
 }
 
 

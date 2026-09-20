@@ -249,7 +249,7 @@ describe("Streamable HTTP server", () => {
     });
     await client.connect(transport);
     try {
-      expect((await client.listTools()).tools).toHaveLength(4);
+      expect((await client.listTools()).tools).toHaveLength(5);
     } finally {
       await client.close();
     }

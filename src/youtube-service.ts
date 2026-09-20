@@ -1,3 +1,4 @@
+import { YouTubeJsPostProvider, POST_CACHE_ENTRIES, POST_PAGE_ENTRIES, POST_TTL_MS, type PostProvider, type PostResult } from "./providers/posts.js";
 import { TtlCache, type AsyncCache } from "./cache/ttl-cache.js";
 import { YouTubeMcpError, errorMessage } from "./errors.js";
 import { SERVER_NAME, SERVER_VERSION } from "./meta.js";
@@ -60,6 +61,7 @@ export interface ServiceRuntimeInfo {
 }
 
 export interface YouTubeServiceDependencies {
+  posts?: PostProvider;
   quota?: QuotaStore;
   videoCache?: AsyncCache<Record<string, unknown>>;
   transcriptCache?: AsyncCache<TranscriptDocument>;
@@ -72,6 +74,7 @@ const DEFAULT_RUNTIME_INFO: ServiceRuntimeInfo = {
 };
 
 export class YouTubeService {
+  private readonly posts: PostProvider;
   private readonly quota: QuotaStore;
   private readonly dataApi: YouTubeDataApiClient | undefined;
   private readonly oEmbed: OEmbedClient;
@@ -83,6 +86,7 @@ export class YouTubeService {
     readonly config: AppConfig,
     dependencies: YouTubeServiceDependencies = {},
   ) {
+    this.posts = dependencies.posts ?? new YouTubeJsPostProvider(config.defaultLanguage, config.defaultRegion, config.requestTimeoutMs);
     this.quota = dependencies.quota ?? createQuotaStore(config);
     this.dataApi =
       config.apiKey && config.providerMode !== "unofficial"
@@ -151,13 +155,16 @@ export class YouTubeService {
         "youtube_search",
         "youtube_channel_get",
         "youtube_playlist_get",
+        "youtube_post_get",
       ],
       views: {
         youtube_video_get: ["metadata", "transcript", "comments"],
-        youtube_search: ["global", "channel", "transcript", "trending"],
+        youtube_search: ["global", "channel", "transcript", "trending", "posts"],
+        youtube_post_get: ["content", "comments"],
       },
       providers: {
         mode: this.config.providerMode,
+        posts: { provider: "youtubejs-posts", available: this.config.providerMode !== "official", requiresApiKey: false },
         officialDataApi: Boolean(this.dataApi),
         transcriptOrder: this.transcriptChain.names,
         transcriptAvailability,
@@ -168,6 +175,7 @@ export class YouTubeService {
       limits: {
         maxResultBytes: this.config.maxResultBytes,
         cursorTtlSeconds: Math.floor(this.config.cursorTtlMs / 1_000),
+        posts: { cacheEntries: POST_CACHE_ENTRIES, continuationEntries: POST_PAGE_ENTRIES, ttlSeconds: POST_TTL_MS / 1000, storage: "process-memory" },
         videoCacheEntries: VIDEO_CACHE_CAPACITY,
         transcriptCacheEntries: TRANSCRIPT_CACHE_CAPACITY,
         cursorSecretSource: this.config.cursorSecretSource,
@@ -189,6 +197,24 @@ export class YouTubeService {
             ]
           : [],
     };
+  }
+
+  assertPostsAvailable(): void {
+    if (this.config.providerMode === "official") throw new YouTubeMcpError(
+      "PROVIDER_UNAVAILABLE", "Community posts require unofficial InnerTube access. Use hybrid or unofficial provider mode.", {}, false,
+    );
+  }
+  getPost(reference: string, locale?: string): Promise<PostResult> {
+    this.assertPostsAvailable();
+    return this.posts.getPost(reference, locale);
+  }
+  listPosts(channel: string, locale?: string, token?: string): Promise<PostResult> {
+    this.assertPostsAvailable();
+    return this.posts.listPosts(channel, locale, token);
+  }
+  listPostComments(post: string, order: "top" | "newest", locale?: string, token?: string): Promise<PostResult> {
+    this.assertPostsAvailable();
+    return this.posts.listComments(post, order, locale, token);
   }
 
   async getVideo(reference: string): Promise<Record<string, unknown>> {

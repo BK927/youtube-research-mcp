@@ -146,3 +146,35 @@ export function channelUrl(channelId: string): string {
 export function playlistUrl(playlistId: string): string {
   return `https://www.youtube.com/playlist?list=${playlistId}`;
 }
+
+const POST_ID_PATTERN = /^Ug[A-Za-z0-9_-]{8,126}$/;
+export function extractPostId(input: string): string {
+  const value = input.trim();
+  if (POST_ID_PATTERN.test(value)) return value;
+  const url = parsePotentialUrl(value);
+  const parts = url?.pathname.split("/").filter(Boolean) ?? [];
+  if (url && ["https:", "http:"].includes(url.protocol) &&
+      ["youtube.com", "www.youtube.com", "m.youtube.com"].includes(url.hostname) &&
+      !url.username && !url.password && !url.port && parts.length === 2 &&
+      parts[0] === "post" && POST_ID_PATTERN.test(parts[1]!)) return parts[1]!;
+  throw new YouTubeMcpError("INVALID_POST_REFERENCE", "Expected a YouTube post ID or youtube.com/post/<id> URL.");
+}
+export function postUrl(id: string): string { return `https://www.youtube.com/post/${id}`; }
+export function exactPostChannel(input: string): string {
+  const value = input.trim();
+  if (CHANNEL_ID_PATTERN.test(value)) return `https://www.youtube.com/channel/${value}`;
+  if (/^@[^\s/?#]+$/u.test(value)) return `https://www.youtube.com/${value}`;
+  const url = parsePotentialUrl(value);
+  const parts = url?.pathname.split("/").filter(Boolean) ?? [];
+  if (url && ["https:", "http:"].includes(url.protocol) &&
+      ["youtube.com", "www.youtube.com", "m.youtube.com"].includes(url.hostname) &&
+      !url.username && !url.password && !url.port) {
+    if (parts[0]?.startsWith("@") && parts[0].length > 1 &&
+        (parts.length === 1 || (parts.length === 2 && ["posts", "community"].includes(parts[1]!))))
+      return `https://www.youtube.com/${parts[0]}`;
+    if (parts[0] === "channel" && CHANNEL_ID_PATTERN.test(parts[1] ?? "") &&
+        (parts.length === 2 || (parts.length === 3 && ["posts", "community"].includes(parts[2]!))))
+      return `https://www.youtube.com/channel/${parts[1]}`;
+  }
+  throw new YouTubeMcpError("INVALID_CHANNEL_REFERENCE", "Post listings require an exact channel ID, @handle, or channel URL; name search is not supported.");
+}

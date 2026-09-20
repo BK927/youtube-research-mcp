@@ -8,6 +8,7 @@ const expected = [
   "youtube_search",
   "youtube_channel_get",
   "youtube_playlist_get",
+  "youtube_post_get",
 ];
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
@@ -241,8 +242,8 @@ try {
 
   console.log(
     skipTranscripts
-      ? "YouTube MCP SDK targeted smoke passed: exact 4 tools, bounded comments/replies, and locale-region inference."
-      : `YouTube MCP SDK smoke passed: exact 4 tools, ${transcriptSuccesses.length}/${videos.length} transcript matrix with research coverage, bounded comments/replies, and locale-region inference.`,
+      ? "YouTube MCP SDK targeted smoke passed: exact 5 tools, bounded comments/replies, and locale-region inference."
+      : `YouTube MCP SDK smoke passed: exact 5 tools, ${transcriptSuccesses.length}/${videos.length} transcript matrix with research coverage, bounded comments/replies, and locale-region inference.`,
   );
 } finally {
   await client.close();

@@ -5,7 +5,7 @@ YouTube Research MCP Server 1.1.1 optimizes for a small, coherent MCP surface an
 ```text
 Local client --stdio--------------------.
                                          v
-Remote client --HTTPS + bearer--> HTTP boundary --> four MCP tools
+Remote client --HTTPS + bearer--> HTTP boundary --> five MCP tools
                                          |              |
                                          |              v
                                          |        YouTubeService
@@ -23,7 +23,7 @@ Cloud state: bounded per-instance cache + transactional Firestore quota store
 
 ## Boundaries
 
-- `src/server.ts` owns the four public tool names, schemas, annotations, cursors, and result shaping.
+- `src/server.ts` owns the five public tool names, schemas, annotations, cursors, and result shaping.
 - `src/output-schemas.ts` declares each tool's success `outputSchema`: the required envelope and typed core fields for its views/scopes. Provider- and selection-dependent fields are optional, and extra provider fields remain intact. Synchronous tools keep `job` empty; errors retain their separate `isError` envelope and are exempt from success-schema validation.
 - `src/youtube-service.ts` resolves references, chooses providers, applies cache/quota controls, and returns provider-neutral data.
 - `src/providers` isolates official and unofficial upstream behavior.

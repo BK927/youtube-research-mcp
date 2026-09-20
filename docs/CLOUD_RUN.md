@@ -73,7 +73,7 @@ The script:
 3. resolves the Artifact Registry `sha256` digest;
 4. deploys `IMAGE@DIGEST` as tag `candidate` with `--no-traffic`;
 5. pins exact stable and candidate Host allowlists;
-6. checks candidate `/health`, OAuth authorization/resource discovery, and unauthenticated `401`, then uses the pinned MCP client to require the exact four-tool list, pass at least two of three transcript probes including one research/TED video, verify structurally intact bounded comments/replies, and verify `ko-KR` trending-region inference;
+6. checks candidate `/health`, OAuth authorization/resource discovery, and unauthenticated `401`, then uses the pinned MCP client to require the exact five-tool list, pass at least two of three transcript probes including one research/TED video, verify structurally intact bounded comments/replies, and verify `ko-KR` trending-region inference;
 7. leaves the candidate at 0% unless `-Promote` is supplied.
 
 To smoke and promote to 100% in one approved run:

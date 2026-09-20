@@ -10,6 +10,7 @@ const TOOL_NAMES = [
   "youtube_search",
   "youtube_channel_get",
   "youtube_playlist_get",
+  "youtube_post_get",
 ];
 
 function stringCharacterCount(value: unknown): number {
@@ -49,7 +50,7 @@ describe("MCP protocol surface", () => {
       const { tools } = await client.listTools();
       expect(tools.map((tool) => tool.name)).toEqual(TOOL_NAMES);
       expect(Buffer.byteLength(JSON.stringify(tools), "utf8")).toBeLessThanOrEqual(
-        18_000,
+        24_000,
       );
       for (const tool of tools) {
         expect(Buffer.byteLength(JSON.stringify(tool), "utf8")).toBeLessThanOrEqual(
@@ -115,6 +116,7 @@ describe("MCP protocol surface", () => {
         ],
         youtube_channel_get: ["channel", "select"],
         youtube_playlist_get: ["cursor", "include_items", "limit", "playlist"],
+        youtube_post_get: ["cursor", "limit", "locale", "max_chars", "options", "post", "view"],
       });
 
       expect((await client.listResources()).resources).toEqual([]);

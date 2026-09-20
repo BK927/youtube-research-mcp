@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "YouTube Research MCP Server — Transcripts, Search, Comments & Playlists",
     "shortDescription": "Research YouTube transcripts, videos, comments, channels, and playlists.",
-    "longDescription": "An unofficial read-only YouTube research plugin with four compact tools for video metadata, timestamped transcripts, comments, search, channels, playlists, trending, and quota-aware access.",
+    "longDescription": "An unofficial read-only YouTube research plugin with five compact tools for video metadata, timestamped transcripts, comments, community posts, search, channels, playlists, trending, and quota-aware access.",
     "developerName": "BK927",
     "category": "Productivity",
     "capabilities": [

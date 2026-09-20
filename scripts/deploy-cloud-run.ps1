@@ -283,7 +283,7 @@ if (-not $candidateUrl -or -not $candidateRevision) {
   throw "The hardened candidate URL/revision could not be resolved."
 }
 
-Write-Host "[4/6] Smoking /health, bearer enforcement, and the four-tool contract..." -ForegroundColor Cyan
+Write-Host "[4/6] Smoking /health, bearer enforcement, and the five-tool contract..." -ForegroundColor Cyan
 $health = Invoke-RestMethod -Uri "$candidateUrl/health" -Method Get
 if (-not $health.ok) { throw "Candidate health response did not report ok=true." }
 Test-HttpStatus "$candidateUrl/mcp" 401

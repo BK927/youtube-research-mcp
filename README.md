@@ -2,7 +2,7 @@
 
 YouTube Research MCP Server 1.1.1 is an unofficial, read-only [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for evidence-oriented YouTube research. It gives AI agents structured access to video metadata, timestamped transcripts, comments and bounded replies, search, channel profiles, playlists, and regional trending videos.
 
-The server exposes four task-oriented tools, reports which provider supplied each result, tracks estimated YouTube Data API quota usage, and marks creator- or viewer-authored text as untrusted. Public transcript retrieval can work without a YouTube API key; official search, comment, channel, playlist, and trending data requires a Data API v3 key.
+The server exposes five task-oriented tools, reports which provider supplied each result, tracks estimated YouTube Data API quota usage, and marks creator- or viewer-authored text as untrusted. Public transcripts and community posts can work without a YouTube API key; official search, comment, channel, playlist, and trending data requires a Data API v3 key.
 
 ## Quick start from source
 
@@ -71,8 +71,9 @@ Restrict `YOUTUBE_API_KEY` to the YouTube Data API in Google Cloud. The local qu
 | `youtube_search` | `global`, `channel`, `transcript`, or `trending` search |
 | `youtube_channel_get` | Profile, statistics, branding, and uploads-playlist selections |
 | `youtube_playlist_get` | Playlist metadata and signed pages of public items |
+| `youtube_post_get` | A public community post or paged top-level comments; no API key in hybrid/unofficial mode |
 
-All four tools are read-only and idempotent. The server does not upload or download media, use account cookies, change watch history, or perform account writes.
+All five tools are read-only and idempotent. The server does not upload or download media, use account cookies, change watch history, or perform account writes.
 
 ## Providers
 
@@ -136,7 +137,7 @@ pwsh -File .\scripts\provision-gcp.ps1 -ProjectId "YOUR_PROJECT_ID"
 pwsh -File .\scripts\deploy-cloud-run.ps1 -ProjectId "YOUR_PROJECT_ID" -Promote
 ```
 
-Deployment requires a clean Git worktree. It builds a full Git SHA image, resolves the Artifact Registry digest, creates a zero-traffic candidate, verifies health/authentication/the four-tool contract and representative transcript/comment/locale behavior, and promotes only with `-Promote`. The scripts and contract tests support this profile, but [the operations document](docs/CLOUD_RUN.md) explicitly records that no live deployment was performed as part of the refactor itself.
+Deployment requires a clean Git worktree. It builds a full Git SHA image, resolves the Artifact Registry digest, creates a zero-traffic candidate, verifies health/authentication/the five-tool contract and representative transcript/comment/locale behavior, and promotes only with `-Promote`. The scripts and contract tests support this profile, but [the operations document](docs/CLOUD_RUN.md) explicitly records that no live deployment was performed as part of the refactor itself.
 
 ### Cloudflare Workers and Tunnel
 
@@ -253,3 +254,25 @@ Additional documents:
 MIT. See [LICENSE](LICENSE).
 
 This is an unofficial community project. It is not affiliated with, endorsed by, or sponsored by YouTube LLC or Google LLC. YouTube is a trademark of Google LLC.
+
+## Public community posts
+
+```json
+{"post":"https://www.youtube.com/post/UgkxAzdixzRQiBw06VNXaEGt5ANIJN0D6hCD","view":"content","locale":"ko"}
+```
+
+Call `youtube_post_get` with a post ID or `/post/<id>` URL. `content` (the default) returns text, author, image URLs, linked video, poll choices, or a shared-post reference. It does not request comments. Use `view="comments"`, `options={"order":"top"}` (default) or `{"order":"newest"}`, and `limit` for top-level comments only; replies are not fetched.
+
+```json
+{"scope":"posts","within":"@supergiantgames","limit":10,"locale":"ko"}
+```
+
+Call `youtube_search` with `scope="posts"` and an exact channel ID, @handle, or channel URL. This lists the channel's public posts in YouTube's order; it does not perform keyword or date-range searches. `query` and `filters` must remain empty. A missing posts tab returns an explicit `no_posts_tab` status. Unreadable comments or provider failures return errors, not a successful empty result.
+
+Both lists and comments return at most one upstream page per request, with `limit` default 10 and maximum 100. Follow `page.next_cursor` with the same inputs/options/language; `limit` may change. No prefetch or automatic crawl occurs. Text shortening is marked; IDs and attachment references are preserved. Dates/counts retain displayed strings such as `1 day ago`, `16K`, or `0`; missing values are null, and exact timestamps/counts are not inferred. Poll percentages conditional on voting are excluded.
+
+The installed YouTube.js provider uses the unofficial InnerTube interface anonymously. It requires no API key or account cookies and works in `hybrid`/`unofficial`; `official` mode returns `PROVIDER_UNAVAILABLE`. `meta.quota_cost` is zero for official API units, not a claim of no network requests. Source fetch times remain unchanged on cache hits. Provider format changes, restrictions, or rate limits can still prevent retrieval.
+
+Post data is never written to disk or Firestore: 128 cached results and 64 continuation states expire after five minutes, with a 512 KiB page limit. The separate bounded response pager is also memory-only, including in Firestore mode. Restart, expiry, eviction, or a different instance can return `CURSOR_MISMATCH`; restart the query in that case. Images are URLs only. No media download, database, scheduler, or historical collection is added.
+
+After `npm run check`, run `node scripts/smoke-posts.mjs` for a small anonymous live MCP check. It tests the supplied post, comment sorts, channel/comment upstream continuations, cursor replay and cache freshness; it prints counts/IDs and local process RSS, not comment text. The sample URLs can be overridden with `--post`, `--comment-post`, and `--channel`. To verify a deployed server, use `--url <MCP URL>` with the existing token in `MCP_SMOKE_ACCESS_TOKEN`; measure the server's RSS separately because the remote client's RSS is not server memory.

@@ -114,7 +114,16 @@ function envelope(data: z.ZodType, item: z.ZodType, kind: z.ZodType) {
   });
 }
 
+const postFields = {
+  id: text, url: text, text,
+  author: z.looseObject({ channelId: text, name: text, url: text }).optional(),
+  publishedLabel: text, likeCountLabel: text,
+  attachment: z.looseObject({ type: z.string() }).nullable().optional(),
+  sharedPost: z.looseObject({ id: text, url: text }).optional(),
+};
 export const outputSchemas = {
+  youtube_post_get: envelope(z.looseObject({ ...postFields, postId: text, order: text, repliesIncluded: flag }),
+    z.looseObject({ ...postFields, replyCountLabel: text, repliesIncluded: flag, isPinned: flag }), z.enum(["entity", "collection"])),
   youtube_video_get: envelope(z.looseObject({
     ...videoFields,
     ...transcriptFields,
@@ -126,6 +135,7 @@ export const outputSchemas = {
   }), videoItem, z.enum(["entity", "collection"])),
   youtube_search: envelope(z.looseObject({
     ...paginationFields,
+    channelId: text, channelTitle: text, order: text, availability: text,
     ...transcriptFields,
     query: text,
     channel: z.looseObject({ id: z.string(), title: text }).optional(),
@@ -135,6 +145,7 @@ export const outputSchemas = {
     categoryId: text,
   }), z.looseObject({
     ...playlistItemFields,
+    ...postFields,
     durationSeconds: number,
     statistics,
     matchIndex: number,
