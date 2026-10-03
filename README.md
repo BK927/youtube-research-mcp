@@ -128,7 +128,14 @@ Home-server deployments normally use the in-memory quota store and continuation 
 
 Unofficial transcript providers can fail because of caption availability, parser changes, proof-of-origin requirements, IP reputation, geography, or YouTube bot challenges. A residential connection may behave differently from a cloud IP, but neither environment is guaranteed.
 
+### Shared passkey login on a home server
+
+For a personal home-server deployment with shared Google-synced or device-bound
+passkeys, see [shared passkey login](docs/PASSKEY_LOGIN.md). This preserves the
+server's existing OAuth tokens and does not authenticate a YouTube account.
+
 ### Google Cloud Run
+
 
 The Cloud Run profile deploys one public MCP ingress container plus a private localhost-only proof-of-origin sidecar. Firestore coordinates daily quota guards, signed-page snapshots, and one-time MCP OAuth codes across restarts and up to two instances.
 
